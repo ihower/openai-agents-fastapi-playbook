@@ -227,7 +227,7 @@ def create_guardrail_agent() -> Agent:
     return Agent(
         name="Guardrail Agent",
         instructions=load_prompt("guardrail"),
-        model="gpt-4.1-mini",
+        model="gpt-5.4-mini",
         output_type=GuardrailResult,
     )
 
@@ -236,7 +236,7 @@ def create_followup_questions_agent() -> Agent:
     return Agent(
         name="Extract Followup Questions Agent",
         instructions="""Your task is to extract 3 follow-up questions from the user's question and return them as "followup_questions": ["question1", "question2", "question3"].""",
-        model="gpt-4.1",
+        model="gpt-5.4-mini",
         output_type=ExtractFollowupQuestionsResult,
     )
 
@@ -254,7 +254,7 @@ def create_lead_agent() -> Agent[CustomAgentContext]:
             #  vector_store_ids=[os.getenv("OPENAI_VECTOR_STORE_ID")],
             #)
         #],
-        model="gpt-5-mini",
+        model="gpt-5.6-luna",
         model_settings=ModelSettings(
             reasoning={
                 "effort": "low",
