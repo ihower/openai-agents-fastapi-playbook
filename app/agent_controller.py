@@ -76,6 +76,12 @@ async def generate_agent_stream_v3(query: str, thread_id: str, user_id: int = 1)
                     yield f"data: {json.dumps(content)}\n\n"
                     chunks_result.append(content)
                     tags.append("gg")
+
+                    # 存 context editing 後的歷史 + 本輪 user query + 實際回覆的婉拒訊息
+                    # 不能用 guardrail agent 的 to_input_list()，那會存到 guardrail 的 structured output
+                    history_items = guardrail_input_items + [
+                        { "role": "assistant", "content": result.final_output.refusal_answer }
+                    ]
                 else:
 
                     agent_input_items = input_items + [ { "role": "user", "content": f"""
@@ -159,11 +165,13 @@ async def generate_agent_stream_v3(query: str, thread_id: str, user_id: int = 1)
                     yield f"data: {json.dumps(data)}\n\n"
                     chunks_result.append(data)
 
+                    history_items = result.to_input_list()
+
                 done_event = { "message": "DONE" }
                 chunks_result.append(done_event)
 
                 # 儲存對話到資料庫
-                raw_items = [json.dumps(item) for item in result.to_input_list()]
+                raw_items = [json.dumps(item) for item in history_items]
                 token_usage = result.context_wrapper.usage
                 metadata = {
                     #"token_usage": asdict(token_usage),

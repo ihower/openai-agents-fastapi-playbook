@@ -10,7 +10,6 @@ import asyncio
 import aiosqlite
 import json
 import pathlib
-from utils import count_tokens
 
 ROOT_DIR = pathlib.Path(__file__).parent.absolute()
 
@@ -58,8 +57,8 @@ async def get_previous_items(db, thread_id: str) -> tuple[list, dict]:
 
 # Context Engineering 閾值設定
 TOOL_CALL_OUTPUT_TRIM_THRESHOLD = 150000  # 當 tokens 超過此值時，簡化 function_call_output
-TURN_BASED_TRIM_THRESHOLD = 200000  # 當 tokens 超過此值時，開始移除舊的對話輪次
-TURN_BASED_TARGET_TOKENS = 50000  # Turn-based trimming 的目標 token 數量
+COMPACTION_THRESHOLD = 200000  # 當 tokens 超過此值時，呼叫 Compaction API 壓縮對話
+COMPACTION_MODEL = "gpt-5.6-luna"  # 執行壓縮的模型，建議與 lead agent 相同
 
 async def context_editing(input_items: list, used_tokens: int) -> list:
     """
@@ -83,59 +82,19 @@ async def context_editing(input_items: list, used_tokens: int) -> list:
                 print(" remove function_call_output! ")
                 item["output"] = "Tool results removed (context limit). Re-run the tool if needed."
 
-        print(f"After tool call filter")
+    # Context Engineering 2: Compaction
+    # 當 tokens 超過閾值時，呼叫 Compaction API 讓模型把整段對話壓縮成摘要
+    # 相較於直接移除最舊的 turns，壓縮後仍能保留早期對話的重點資訊
+    if used_tokens > COMPACTION_THRESHOLD:
+        print(f"Trigger message compaction: used_tokens={used_tokens}")
 
-    # Context Engineering 2: Turn-based trimming
-    # 當 tokens 超過閾值時，按 user turns 移除最舊的對話
-    if used_tokens > TURN_BASED_TRIM_THRESHOLD:
-        print(f"Trigger turn-based message filter: used_tokens={used_tokens}")
+        compacted = await openai_client.responses.compact(
+            model=COMPACTION_MODEL,
+            input=input_items,
+        )
+        input_items = [item.model_dump(exclude_none=True) for item in compacted.output]
 
-        # 按 user role 切分 turns
-        turns = []  # nested list
-        current_turn = []
-
-        for item in input_items:
-            if item.get("role") == "user" and current_turn:
-                # 遇到新的 user message，結束當前 turn
-                turns.append(current_turn)
-                current_turn = [item]
-            else:
-                current_turn.append(item)
-
-        # 添加最後一個 turn
-        if current_turn:
-            turns.append(current_turn)
-
-        # 計算每個 turn 的 tokens 數量
-        turn_tokens = []
-        for i, turn in enumerate(turns):
-            turn_content = ""
-            for item in turn:
-                if item.get("content"):
-                    turn_content += str(item.get("content", ""))
-                if item.get("output"):
-                    turn_content += str(item.get("output", ""))
-
-            tokens = count_tokens(turn_content)
-            turn_tokens.append((i, tokens, turn))
-
-        # 從最舊的 turn 開始移除，直到總 tokens 低於目標值
-        total_tokens = sum(tokens for _, tokens, _ in turn_tokens)
-        removed_turns = 0
-
-        while total_tokens > TURN_BASED_TARGET_TOKENS and len(turn_tokens) > 1:  # 保留至少1個 turn
-            # 移除最舊的 turn (索引最小的)
-            removed_turn = turn_tokens.pop(0)
-            total_tokens -= removed_turn[1]
-            removed_turns += 1
-            print(f"Removed turn {removed_turn[0]} with {removed_turn[1]} tokens")
-
-        # 重建 items
-        input_items = []
-        for _, _, turn in turn_tokens:
-            input_items.extend(turn)
-
-        print(f"Token management: removed {removed_turns} turns, remaining tokens: {total_tokens}")
+        print(f"Compaction done: {len(input_items)} items after compaction")
 
     return input_items
 
